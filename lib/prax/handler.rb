@@ -14,12 +14,14 @@ module Prax
     end
 
     def handle
-      file = PublicFile.new(request, app_name)
-      if file.exists?
-        file.stream_to(socket)
-      else
-        request.proxy_to(connection)  # socket => connection
-        response.proxy_to(socket)     # socket <= connection
+      if request.uri
+        file = PublicFile.new(request, app_name)
+        if file.exists?
+          file.stream_to(socket)
+        else
+          request.proxy_to(connection)  # socket => connection
+          response.proxy_to(socket)     # socket <= connection
+        end
       end
 
     rescue CantStartApp
