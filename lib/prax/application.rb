@@ -7,6 +7,15 @@ module Prax
     attr_reader :app_name, :pid, :port, :workers, :available_workers
     alias name app_name
 
+    def self.name_for(fqdn)
+      segments = fqdn.split('.')
+      (segments.size - 1).times do |index|
+        app_name = segments[index...-1].join('.')
+        return app_name if File.exists?(File.join(Config.host_root, app_name))
+      end
+      :default
+    end
+
     class AppWorker
       attr_reader :socket_path
 
@@ -98,10 +107,6 @@ module Prax
       def env
         { 'PATH' => ENV['ORIG_PATH'], 'PRAX_DEBUG' => ENV['PRAX_DEBUG'], 'HOME' => ENV['HOME'] }
       end
-    end
-
-    def self.exists?(app_name)
-      File.exists?(File.join(Config.host_root, app_name))
     end
 
     def initialize(app_name)

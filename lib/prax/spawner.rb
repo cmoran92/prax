@@ -14,6 +14,7 @@ module Prax
     @monitor.run
 
     def get(app_name)
+      Prax.logger.debug "Spawner.get(#{app_name}): #{realpath(app_name)}"
       @mutex.synchronize do
         app = @apps.find { |_app| _app.realpath == realpath(app_name) }
 

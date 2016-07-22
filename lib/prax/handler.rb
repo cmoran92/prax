@@ -68,19 +68,10 @@ module Prax
       @app_name ||= if request.host.ip?
                       :default
                     elsif request.host.xip?
-                      resolve_fqdn(request.xip_host) || :default
+                      Application.name_for(request.xip_host)
                     else
-                      resolve_fqdn(request.host) || :default
+                      Application.name_for(request.host)
                     end
-    end
-
-    def resolve_fqdn(host)
-      segments = host.split('.')
-      (segments.size - 1).times do |index|
-        app_name = segments[index...-1].join('.')
-        return app_name if Application.exists?(app_name)
-      end
-      nil
     end
   end
 end
