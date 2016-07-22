@@ -16,7 +16,7 @@ module Prax
     def get(app_name)
       Prax.logger.debug "Spawner.get(#{app_name}): #{realpath(app_name)}"
       @mutex.synchronize do
-        app = @apps.find { |_app| _app.realpath == realpath(app_name) }
+        app = @apps.find { |_app| _app.app_name == app_name }
 
         if app
           app.kill if app.restart?
@@ -47,12 +47,12 @@ module Prax
       end
 
       def spawn(app_name)
-        @apps << app = Application.new(app_name)
+        @apps << app = Application.for(app_name)
         @monitor << app
-        app.start unless app.port_forwarding?
+        app.start
         app
       rescue
-        app.kill if app && !app.port_forwarding?
+        app.kill if app
         raise
       end
   end

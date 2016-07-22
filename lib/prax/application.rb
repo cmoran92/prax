@@ -4,17 +4,79 @@ module Prax
   class Application
     include Timeout
 
-    attr_reader :app_name, :pid, :port, :workers, :available_workers
+    attr_reader :app_name, :pid, :workers, :available_workers
     alias name app_name
 
     def self.name_for(fqdn)
       segments = fqdn.split('.')
       (segments.size - 1).times do |index|
         app_name = segments[index...-1].join('.')
-        return app_name if File.exists?(File.join(Config.host_root, app_name))
+        return app_name if File.exists?(path(app_name))
       end
       :default
     end
+
+    def self.path(name)
+      File.join(Config.host_root, name)
+    end
+    private_class_method :path
+
+    def self.for(name)
+      if File.exists?(_path = path(name))
+        if File.symlink?(_path)
+          __path = File.realpath(_path) if File.symlink?(_path)
+          unless File.exists?(_path)
+            Prax.logger.error "Dangling symlink from #{_path} to #{__path}"
+            raise NoSuchApp.new
+          end
+          _path = __path
+        end
+        if File.directory?(_path)
+          return RackApplication.new(_path)
+        else
+          port = File.read(_path).strip.to_i
+          if port > 0
+            return PortForwardingApplication.new(name, port)
+          else
+            Prax.logger.error "Could not read port number for #{name} from file at #{_path}"
+            raise NoSuchApp.new
+          end
+        end
+      end
+    end
+
+    def initialize(name)
+      @app_name = name
+    end
+
+    def log_path
+      @log_path ||= File.join(Config.log_root, "#{@app_name}.log")
+    end
+  end
+
+  class PortForwardingApplication < Application
+    attr_reader :port
+
+    def initialize(name, port)
+      @port = port
+      super(name)
+    end
+
+    def start; end
+    def kill; end
+    def restart?; false; end
+
+    def socket
+      Prax.logger.debug "Getting socket for app #{name} (#{object_id})"
+      begin
+        return TCPSocket.new('localhost', @port)
+      rescue Errno::ECONNREFUSED, Errno::ECONNRESET
+        raise PortForwardingConnectionError.new
+      end
+    end
+  end
+
+  class RackApplication
 
     class AppWorker
       attr_reader :socket_path
@@ -128,26 +190,15 @@ module Prax
     end
 
     def kill(type = :TERM, wait = true)
-      return if port_forwarding?
-
       @workers.each(&:kill)
     end
 
     def socket
       Prax.logger.debug "Getting socket for #{app_name} (#{object_id})"
-      if port_forwarding?
-        begin
-          return TCPSocket.new('localhost', @port)
-        rescue Errno::ECONNREFUSED, Errno::ECONNRESET
-          raise PortForwardingConnectionError.new
-        end
-      end
-
       next_worker.socket
     end
 
     def restart?
-      return false if port_forwarding?
       return true unless @workers.detect(&:started?)
       return true if File.exists?(File.join(realpath, 'tmp', 'always_restart.txt'))
 
@@ -172,16 +223,8 @@ module Prax
       return false
     end
 
-    def port_forwarding?
-      !!@port
-    end
-
     def socket_path
       next_worker.socket_path
-    end
-
-    def log_path
-      @log_path ||= File.join(Config.log_root, "#{File.basename(realpath)}.log")
     end
 
     def realpath
