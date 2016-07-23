@@ -4,7 +4,7 @@ module Prax
   class Application
     include Timeout
 
-    attr_reader :app_name, :pid, :workers, :available_workers
+    attr_reader :app_name
     alias name app_name
 
     def self.name_for(fqdn)
@@ -32,7 +32,7 @@ module Prax
           _path = __path
         end
         if File.directory?(_path)
-          return RackApplication.new(_path)
+          return RackApplication.new(name, _path)
         else
           port = File.read(_path).strip.to_i
           if port > 0
@@ -76,7 +76,59 @@ module Prax
     end
   end
 
-  class RackApplication
+  class RackApplication < Application
+    attr_reader :path, :workers, :available_workers
+
+    def initialize(name, path)
+      super(name)
+      @path = path
+      @last_worker_number = 0
+      @workers = []
+      @available_workers = []
+    end
+
+    def start
+      Prax.logger.info "Starting application #{app_name} (#{object_id})"
+      Prax.logger.debug "Workers: #{@workers}"
+      spawn unless @workers.detect(&:started?)
+    end
+
+    def spawn
+      Prax.logger.info "Spawning one worker for application #{app_name} (#{object_id})"
+      AppWorker.new(self)
+    end
+
+    def next_worker_number
+      @last_worker_number += 1
+    end
+
+    def kill(type = :TERM, wait = true)
+      @workers.each(&:kill)
+    end
+
+    def socket
+      Prax.logger.debug "Getting socket for #{app_name} (#{object_id})"
+      spawn if next_worker.nil?
+      next_worker.socket
+    end
+
+    def restart?
+      return true unless @workers.detect(&:started?)
+      return true if File.exists?(File.join(realpath, 'tmp', 'always_restart.txt'))
+
+      restart = File.join(realpath, 'tmp', 'restart.txt')
+      File.exists?(restart) && workers.detect{|w| File.stat(w.socket_path).mtime < File.stat(restart).mtime }
+    end
+
+    private
+
+    def realpath
+      @realpath ||= File.realpath(path)
+    end
+
+    def next_worker
+      available_workers.first
+    end
 
     class AppWorker
       attr_reader :socket_path
@@ -84,8 +136,8 @@ module Prax
       def initialize(app)
         @app = app
         @worker_number = app.next_worker_number
-        @socket_path = File.join(Config.socket_root, "#{File.basename(app.realpath)}-#{@worker_number}.sock")
-        Prax.logger.info "Spawning application '#{app.app_name}' [#{app.realpath}]"
+        @socket_path = File.join(Config.socket_root, "#{File.basename(app.path)}-#{@worker_number}.sock")
+        Prax.logger.info "Spawning application '#{app.app_name}' [#{app.path}]"
         Prax.logger.debug command.inspect
 
         start
@@ -151,7 +203,7 @@ module Prax
 
       def start
         @pid = Process.spawn(env, *command,
-          chdir: @app.realpath,
+          chdir: @app.path,
           out: [@app.log_path, 'a'],
           err: :out,
           unsetenv_others: true,
@@ -170,84 +222,5 @@ module Prax
         { 'PATH' => ENV['ORIG_PATH'], 'PRAX_DEBUG' => ENV['PRAX_DEBUG'], 'HOME' => ENV['HOME'] }
       end
     end
-
-    def initialize(app_name)
-      @app_name = app_name.to_s
-      @last_worker_number = 0
-      @workers = []
-      @available_workers = []
-      raise NoSuchApp.new unless configured?
-    end
-
-    def next_worker_number
-      @last_worker_number += 1
-    end
-
-    def start
-      Prax.logger.info "Starting application #{app_name} (#{object_id})"
-      Prax.logger.debug "Workers: #{@workers}"
-      spawn unless @workers.detect(&:started?)
-    end
-
-    def kill(type = :TERM, wait = true)
-      @workers.each(&:kill)
-    end
-
-    def socket
-      Prax.logger.debug "Getting socket for #{app_name} (#{object_id})"
-      next_worker.socket
-    end
-
-    def restart?
-      return true unless @workers.detect(&:started?)
-      return true if File.exists?(File.join(realpath, 'tmp', 'always_restart.txt'))
-
-      restart = File.join(realpath, 'tmp', 'restart.txt')
-      File.exists?(restart) && workers.detect{|w| File.stat(w.socket_path).mtime < File.stat(restart).mtime }
-    end
-
-    def configured?
-      if File.exists?(path)
-        if File.symlink?(path) || File.directory?(path)
-          # rack app
-          return File.directory?(realpath)
-        else
-          # port forwarding
-          port = File.read(path).strip.to_i
-          if port > 0
-            @port = port
-            return true
-          end
-        end
-      end
-      return false
-    end
-
-    def socket_path
-      next_worker.socket_path
-    end
-
-    def realpath
-      @realpath ||= File.realpath(path)
-    end
-
-    private
-
-    def next_worker
-      available_workers.first
-    end
-
-      def spawn
-        Prax.logger.info "Spawning one worker for application #{app_name} (#{object_id})"
-        AppWorker.new(self)
-      end
-
-      def path
-        @path ||= File.join(Config.host_root, app_name)
-      end
-
-      def gemfile?
-        File.exists?(File.join(realpath, 'Gemfile'))
-      end
   end
 end

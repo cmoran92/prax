@@ -25,7 +25,7 @@ module Prax
       end
 
     rescue CantStartApp
-      if app.port
+      if app.is_a? PortForwardingApplication
         render :port_forwarding_connection_error, status: 500
       else
         render :cant_start_app, status: 500
