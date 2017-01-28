@@ -112,6 +112,17 @@ module Prax
       next_worker.socket
     end
 
+    def with_socket(&block)
+      worker = next_worker
+      worker = spawn if worker.nil?
+      @available_workers.delete worker
+      begin
+        yield worker.socket
+      ensure
+        @available_workers << worker
+      end
+    end
+
     def restart?
       return true unless @workers.detect(&:started?)
       return true if File.exists?(File.join(realpath, 'tmp', 'always_restart.txt'))
@@ -127,7 +138,7 @@ module Prax
     end
 
     def next_worker
-      available_workers.first
+      @available_workers.first
     end
 
     class AppWorker
@@ -173,7 +184,9 @@ module Prax
       end
 
       def started?
-        File.exists?(socket_path)
+        result = File.exists?(socket_path)
+        Prax.logger.debug "File #{socket_path} does not exist yet" unless result
+        result
       end
     
       private
@@ -184,7 +197,7 @@ module Prax
 
       def wait_for_process
         timeout(30, CantStartApp) do
-          sleep 0.01 while process_exists? && !started?
+          sleep 1 while process_exists? && !started?
         end
       end
 

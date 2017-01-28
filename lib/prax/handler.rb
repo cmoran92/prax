@@ -19,8 +19,11 @@ module Prax
         if file.exists?
           file.stream_to(socket)
         else
-          request.proxy_to(connection)  # socket => connection
-          response.proxy_to(socket)     # socket <= connection
+          app.with_socket do |connection|
+            @connection = connection
+            request.proxy_to(connection)  # socket => connection
+            response.proxy_to(socket)     # socket <= connection
+          end
         end
       end
 
